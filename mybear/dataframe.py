@@ -3,7 +3,7 @@ import pandas as pd
 
 class DataFrame:
     def __init__(self, data):
-        self.data = {col: Series(data[col]) for col in data}
+        self.data = {col: series(data[col]) for col in data}
 
     def max(self):
         return {col: series.max() for col, series in self.data.items()}
