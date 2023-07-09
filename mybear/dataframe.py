@@ -1,70 +1,95 @@
-import numpy as np
-import pandas as pd
+import statistics
+import csv
+import json
+import series as ser
+from typing import List, Dict, Callable, Any, Union
+
 
 class DataFrame:
-    def __init__(self, data):
-        self.data = {col: series(data[col]) for col in data}
+    def __init__(self, data=None, columns=None):
+        if isinstance(data, list) and all(isinstance(i, ser) for i in data):
+            self.data = {series.name: series.data for series in data}
+        elif isinstance(columns, list) and isinstance(data, list):
+            self.data = {col: vals for col, vals in zip(columns, data)}
+        else:
+            self.data = data or {}
+
+    @property
+    def iloc(self):
+        return self.data
 
     def max(self):
-        return {col: series.max() for col, series in self.data.items()}
+        return DataFrame({col: [max(vals)] for col, vals in self.data.items()})
 
     def min(self):
-        return {col: series.min() for col, series in self.data.items()}
+        return DataFrame({col: [min(vals)] for col, vals in self.data.items()})
 
     def mean(self):
-        return {col: series.mean() for col, series in self.data.items()}
+        return DataFrame({col: [statistics.mean(vals)] for col, vals in self.data.items()})
 
     def std(self):
-        return {col: series.std() for col, series in self.data.items()}
+        return DataFrame({col: [statistics.stdev(vals)] for col, vals in self.data.items()})
 
     def count(self):
-        return {col: series.count() for col, series in self.data.items()}
+        return DataFrame({col: [len(vals)] for col, vals in self.data.items()})
 
     @staticmethod
-    def read_csv(file_path):
-        data = pd.read_csv(file_path)
-        return DataFrame(data.to_dict())
+    def read_csv(path: str, delimiter: str = ",") -> 'DataFrame':
+        with open(path, 'r') as f:
+            reader = csv.reader(f, delimiter=delimiter)
+            data = list(reader)
+            columns = data[0]
+            data = list(map(list, zip(*data[1:])))
+            return DataFrame(data, columns)
 
     @staticmethod
-    def read_json(file_path):
-        data = pd.read_json(file_path)
-        return DataFrame(data.to_dict())
+    def read_json(path: str, orient: str = "records") -> 'DataFrame':
+        with open(path, 'r') as f:
+            data = json.load(f)
+            if orient == 'records':
+                columns = data[0].keys()
+                data = [list(item.values()) for item in data]
+                data = list(map(list, zip(*data)))
+                return DataFrame(data, columns)
+            elif orient == 'columns':
+                return DataFrame([list(vals) for vals in data.values()], list(data.keys()))
 
-    def groupby(self, column_name):
-        # Vérifier que la colonne existe
-        assert column_name in self.data, f"Unknown column {column_name}"
+    def groupby(self, by: Union[List[str], str], agg: Dict[str, Callable[[List[Any]], Any]]) -> 'DataFrame':
+        if isinstance(by, str):
+            by = [by]
 
-        # Créer un dictionnaire pour stocker les groupes
-        groups = {}
+        result = {}
+        for column in by:
+            for name, function in agg.items():
+                if name not in result:
+                    result[name] = [function(self.data[name])]
+                else:
+                    result[name].append(function(self.data[name]))
 
-        # Parcourir les données et les regrouper par la colonne choisie
-        for i, value in enumerate(self.data[column_name]):
-            if value not in groups:
-                groups[value] = DataFrame({k: [v[i]] for k, v in self.data.items()})
+        return DataFrame(result)
+
+    def join(self, other: 'DataFrame', left_on: Union[List[str], str], right_on: Union[List[str], str],
+             how: str = "left") -> 'DataFrame':
+        # left join only for simplicity
+        if isinstance(left_on, str):
+            left_on = [left_on]
+
+        if isinstance(right_on, str):
+            right_on = [right_on]
+
+        # create the result
+        result = {}
+        for column in self.data:
+            if column in left_on:
+                result[column] = self.data[column]
             else:
-                for k, v in self.data.items():
-                    groups[value].data[k].append(v[i])
+                result[column] = self.data[column] + [None] * len(other.data[right_on[0]])
 
-        return groups
+        for column in other.data:
+            if column in right_on:
+                if column not in result:
+                    result[column] = [None] * len(self.data[left_on[0]]) + other.data[column]
+            else:
+                result[column] = [None] * len(self.data[left_on[0]]) + other.data[column]
 
-    def join(self, other, on):
-        # Vérifier que la colonne existe dans les deux DataFrames
-        assert on in self.data, f"Unknown column {on} in self"
-        assert on in other.data, f"Unknown column {on} in other"
-
-        # Créer un nouveau DataFrame pour stocker le résultat
-        result_data = {k: [] for k in self.data.keys()}
-        result_data.update({f"other_{k}": [] for k in other.data.keys() if k != on})
-
-        # Parcourir les lignes du premier DataFrame
-        for i, value in enumerate(self.data[on]):
-            # Si la valeur est aussi dans l'autre DataFrame
-            if value in other.data[on]:
-                # Ajouter la ligne à result_data
-                for k, v in self.data.items():
-                    result_data[k].append(v[i])
-                for k, v in other.data.items():
-                    if k != on:
-                        result_data[f"other_{k}"].append(v[other.data[on].index(value)])
-
-        return DataFrame(result_data)
+        return DataFrame(result)
